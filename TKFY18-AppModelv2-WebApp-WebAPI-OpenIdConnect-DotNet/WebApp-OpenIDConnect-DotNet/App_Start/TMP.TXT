@@ -1,0 +1,140 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using Owin;
+using Microsoft.Owin.Security;
+using Microsoft.Owin.Security.Cookies;
+using Microsoft.Owin.Security.OpenIdConnect;
+using System.Configuration;
+using System.Globalization;
+using System.Threading.Tasks;
+using Microsoft.IdentityModel.Protocols;
+using Microsoft.Owin.Security.Notifications;
+using System.IdentityModel.Tokens;
+using System.Net.Http;
+using TodoList_WebApp.Utils;
+using System.Security.Claims;
+
+using Microsoft.Identity.Client;
+using System.Threading;
+using System.Diagnostics;
+using Microsoft.Graph;
+using System.Net.Http.Headers;
+
+namespace TodoList_WebApp
+{
+    public partial class Startup
+    {
+        public static string clientId = ConfigurationManager.AppSettings["ida:ClientId"];
+        public static string clientSecret = ConfigurationManager.AppSettings["ida:ClientSecret"];
+        public static string aadInstance = ConfigurationManager.AppSettings["ida:AADInstance"];
+        private static string redirectUri = ConfigurationManager.AppSettings["ida:RedirectUri"];
+        private ConfidentialClientApplication app = null;
+
+        public void ConfigureAuth(IAppBuilder app)
+        {
+            app.SetDefaultSignInAsAuthenticationType(CookieAuthenticationDefaults.AuthenticationType);
+
+            app.UseCookieAuthentication(new CookieAuthenticationOptions());
+
+            app.UseOpenIdConnectAuthentication(
+                new OpenIdConnectAuthenticationOptions
+                {
+                    // The `Authority` represents the v2.0 endpoint - https://login.microsoftonline.com/common/v2.0
+                    // The `Scope` describes the permissions that your app will need.  See https://azure.microsoft.com/documentation/articles/active-directory-v2-scopes/
+                    // In a real application you could use issuer validation for additional checks, like making sure the user's organization has signed up for your app, for instance.
+
+                    ClientId = clientId,
+                    Authority = String.Format(CultureInfo.InvariantCulture, aadInstance, "common", "/v2.0"),
+                    Scope = "openid email profile offline_access User.Read",
+                    RedirectUri = redirectUri,
+                    PostLogoutRedirectUri = redirectUri,
+                    //ResponseType = "code id_token", //To get on-behalf
+                    TokenValidationParameters = new TokenValidationParameters
+                    {
+                        ValidateIssuer = false,
+                    },
+
+                    // The `AuthorizationCodeReceived` notification is used to capture and redeem the authorization_code that the v2.0 endpoint returns to your app.
+
+                    Notifications = new OpenIdConnectAuthenticationNotifications
+                    {
+                        //RedirectToIdentityProvider = (context) =>
+                        //{
+                        //    string appBaseUrl = context.Request.Scheme + "://" + context.Request.Host + context.Request.PathBase + "/";
+                        //    context.ProtocolMessage.RedirectUri = appBaseUrl;
+                        //    context.ProtocolMessage.PostLogoutRedirectUri = appBaseUrl;
+                        //    //context.ProtocolMessage.Prompt = "user_consent";
+                        //    return Task.FromResult(0);
+                        //},
+                        AuthenticationFailed = OnAuthenticationFailed,
+                        AuthorizationCodeReceived = OnAuthorizationCodeReceived,
+                    }
+                });
+    }
+
+        private async Task OnAuthorizationCodeReceived(AuthorizationCodeReceivedNotification notification)
+        {
+            string userObjectId = notification.AuthenticationTicket.Identity.FindFirst("http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier").Value;
+            string tenantID = notification.AuthenticationTicket.Identity.FindFirst("http://schemas.microsoft.com/identity/claims/tenantid").Value;
+            string authority = String.Format(CultureInfo.InvariantCulture, aadInstance, tenantID, string.Empty);
+            ClientCredential cred = new ClientCredential(clientSecret);
+            string code = notification.Code;
+
+            // Here you ask for a token using the web app's clientId as the scope, since the web app and service share the same clientId.
+            app = new ConfidentialClientApplication(Startup.clientId, redirectUri, cred, new NaiveSessionCache(userObjectId, notification.OwinContext.Environment["System.Web.HttpContextBase"] as HttpContextBase)) {};
+            var authResult = await app.AcquireTokenByAuthorizationCodeAsync(new string[] { clientId }, code);
+
+            return;
+            //Token for graph api 
+            AuthenticationResult result = await app.AcquireTokenByAuthorizationCodeAsync(
+                new string[] { "User.Read" },code);
+            /*
+             * AADSTS65001: The user or administrator has not consented to use the application with ID '279fd129-c4c4-4b6b-b1f5-0ac9b9734d18' named 'TKFY18-AppModelv2-WebApp-WebAPI-OpenIdConnect-DotNet'. Send an interactive authorization request for this user and resource. Trace ID: 9abddfa5-c8a7-41ce-b298-ab5acd3b1600 Correlation ID: c5112fc3-4da8-43c6-9518-8a3c4fb48d0c Timestamp: 2018-01-21 15:45:53Z
+             */
+
+            try
+            {
+                var accessToken = result.Token;
+                //REST
+                var clt = new HttpClient();
+                clt.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+                clt.BaseAddress = new Uri("https://graph.microsoft.com");
+                var r = await clt.GetAsync("v1.0/me");
+                Debug.WriteLine(await r.Content.ReadAsStringAsync());
+
+
+                //API
+                var graphserviceClient = new GraphServiceClient(
+                    new DelegateAuthenticationProvider(
+                        (requestMessage) =>
+                        {
+                            requestMessage.Headers.Authorization = new AuthenticationHeaderValue("bearer", accessToken);
+
+                            return Task.FromResult(0);
+                        }));
+
+                var items = await graphserviceClient.Me.Request().GetAsync();
+                Debug.WriteLine(items);
+            }
+            catch (AggregateException ex)
+            {
+
+            }
+            catch (Exception ex)
+            {
+
+            }
+
+            return;
+        }
+
+        private Task OnAuthenticationFailed(AuthenticationFailedNotification<OpenIdConnectMessage, OpenIdConnectAuthenticationOptions> notification)
+        {
+            notification.HandleResponse();
+            notification.Response.Redirect("/Error?message=" + notification.Exception.Message);
+            return Task.FromResult(0);
+        }
+    }
+}

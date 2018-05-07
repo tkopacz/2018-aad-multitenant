@@ -1,0 +1,11 @@
+{
+  "name": "myproject",
+  "version": "1.0.0",
+  "devDependencies": {
+    "@types/adal-angular": "^1.0.1",
+    "adal-angular": "1.0.17",
+    "expose-loader": "^0.7.5",
+    "gulp-cli": "2.0.1",
+    "jquery": "3.3.1"
+  }
+}

@@ -1,0 +1,1 @@
+DODAC DO App Service ASPNETCORE_ENVIRONMENT	=	Release

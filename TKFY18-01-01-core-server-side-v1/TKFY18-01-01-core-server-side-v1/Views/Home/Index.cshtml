@@ -1,0 +1,13 @@
+﻿@{
+    ViewData["Title"] = "Home Page";
+}
+
+@model IEnumerable<System.Security.Claims.Claim>
+
+
+<div class="row">
+    @foreach (var item in Model)
+    {
+        <p>@item.ToString()</p>
+    }
+</div>
