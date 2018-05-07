@@ -1,1 +1,1 @@
-# 2018-aad-multitenant
+# Samples for AAD based authorization and multitenants apps
